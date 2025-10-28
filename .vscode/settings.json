@@ -1,0 +1,6 @@
+{
+  "python.pythonPath": "./.venv/bin/python",
+  "python.languageServer": "Pylance",
+  "python.analysis.extraPaths": ["./server/.venv/lib/python3.12/site-packages"],
+  "python.autoComplete.addBrackets": true
+}
