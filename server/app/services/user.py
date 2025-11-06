@@ -91,7 +91,7 @@ def login(user: LoginRequest, db: Session = Depends(get_db)):
     access_token = create_access_token({"sub": db_id})
     refresh_token = create_refresh_token({"sub": db_id})
 
-    check_user.refresh_token = refresh_token
+    # check_user.refresh_token = refresh_token
     db.commit()
 
     data = {"name": db_name, "email": email}
@@ -105,19 +105,19 @@ def login(user: LoginRequest, db: Session = Depends(get_db)):
         },
     )
 
-    set_cookie(response, "accessToken", access_token, max_age=15 * 60)
+    set_cookie(response, "accessToken", access_token, max_age=60 * 60)
     set_cookie(
         response,
         "refreshToken",
         refresh_token,
         max_age=7 * 24 * 60 * 60,
-        path="/auth/refresh",
+        path="/",
     )
     return response
 
 
-@router.post("/refresh")
-def refresh_token(request: Request, response: Response):
+@router.get("/refresh", response_model=LoginResponse)
+def refresh_token(request: Request, response: Response, db: Session = Depends(get_db)):
     refresh_token = get_cookie(request, "refreshToken")
     if not refresh_token:
         return JSONResponse(
@@ -130,7 +130,7 @@ def refresh_token(request: Request, response: Response):
 
     payload = verify_token(refresh_token, is_refresh=True)
     if not payload:
-        delete_cookie(response, "refreshToken", path="/refresh")
+        delete_cookie(response, "refreshToken", path="/")
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={
@@ -139,11 +139,19 @@ def refresh_token(request: Request, response: Response):
             },
         )
 
-    new_access_token = create_access_token({"sub": str(payload["id"])})
-    set_cookie(response, "accessToken", new_access_token, max_age=15 * 60)
+    id = payload["sub"]
+    check_user = db.query(User).filter(User.id == int(id)).first()
+    data = {"name": check_user.name, "email": check_user.email}
+
+    new_access_token = create_access_token({"sub": str(payload["sub"])})
+    set_cookie(response, "accessToken", new_access_token, max_age=60 * 60)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content={"status": status.HTTP_200_OK, "message": "Access token refreshed"},
+        content={
+            "status": status.HTTP_200_OK,
+            "message": "Access token refreshed",
+            "data": data,
+        },
     )
 
 

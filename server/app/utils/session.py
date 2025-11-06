@@ -1,4 +1,10 @@
 from fastapi import Response, Request
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+APP_ENV = os.getenv("APP_ENV")
 
 
 def set_cookie(response: Response, key: str, token: str, max_age: int, path: str = "/"):
@@ -7,7 +13,7 @@ def set_cookie(response: Response, key: str, token: str, max_age: int, path: str
         value=token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="None" if APP_ENV == "DEVELOPMENT" else "lax",
         max_age=max_age,
         path=path,
     )
