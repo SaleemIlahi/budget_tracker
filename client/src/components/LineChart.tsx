@@ -1,203 +1,264 @@
-// CurvedLineChart.tsx
-// React + TypeScript component for a responsive curved line chart using D3 without dots or axis lines.
-
-import React, { useRef, useEffect, useMemo } from "react";
+import React, { useEffect, useRef } from "react";
 import * as d3 from "d3";
 
-interface DataPoint {
-  date: string | Date;
+export interface LineChartPoint {
+  date: string; // "2025-10-01" or ISO
   value: number;
 }
 
-interface CurvedLineChartProps {
-  data?: DataPoint[];
-  width?: number;
-  height?: number;
-  margin?: { top: number; right: number; bottom: number; left: number };
-  xAccessor?: (d: DataPoint) => string | Date;
-  yAccessor?: (d: DataPoint) => number;
-  toolTip?: boolean;
+interface ParsedPoint {
+  date: Date;
+  value: number;
 }
 
-const CurvedLineChart: React.FC<CurvedLineChartProps> = ({
-  data = null,
+interface LineChartProps {
+  data: LineChartPoint[];
+  width?: number;
+  height?: number;
+}
+
+const LineChart: React.FC<LineChartProps> = ({
+  data,
   width = 800,
-  height = 400,
-  margin = { top: 20, right: 30, bottom: 40, left: 50 },
-  xAccessor = (d) => d.date,
-  yAccessor = (d) => d.value,
-  toolTip = false,
+  height = 300,
 }) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
 
-  const sample = useMemo(() => {
-    const now = new Date();
-    return Array.from({ length: 12 }).map((_, i) => ({
-      date: d3.timeMonth.offset(now, -11 + i),
-      value: Math.round(20 + Math.sin(i / 2) * 10 + Math.random() * 8),
-    }));
-  }, []);
+  // ---------- Helpers ----------
+  const normalizeDate = (d: string) => {
+    const date = new Date(d);
+    return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+  };
 
-  const dataset = data && data.length > 0 ? data : sample;
+  const buildMonthData = (
+    baseDate: string,
+    arr: LineChartPoint[]
+  ): ParsedPoint[] => {
+    const base = new Date(baseDate);
+    const year = base.getFullYear();
+    const month = base.getMonth();
+    const valueMap = new Map<string, number>();
+    arr.forEach((d) => valueMap.set(normalizeDate(d.date), d.value));
 
+    const result: ParsedPoint[] = [];
+    let curr = new Date(year, month, 1);
+
+    while (curr.getMonth() === month) {
+      // if (isCurrentMonth && curr > today) break;
+      const key = `${curr.getFullYear()}-${
+        curr.getMonth() + 1
+      }-${curr.getDate()}`;
+      result.push({
+        date: new Date(curr),
+        value: valueMap.get(key) ?? 0,
+      });
+      curr.setDate(curr.getDate() + 1);
+    }
+    return result;
+  };
+
+  // ---------- D3 ----------
   useEffect(() => {
-    if (!dataset || dataset.length === 0) return;
+    if (!data.length) return;
 
-    const parsed = dataset.map((d) => {
-      const x = xAccessor(d);
-      const date = typeof x === "string" ? new Date(x) : x;
-      return { ...d, __date: date, __value: +yAccessor(d) };
-    });
+    const parsedData = buildMonthData(data[0].date, data);
+
+    const margin = { top: 20, right: 20, bottom: 30, left: 40 };
+    const innerWidth = width - margin.left - margin.right;
+    const innerHeight = height - margin.top - margin.bottom;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
-
     const g = svg
-      .attr("viewBox", `0 0 ${width} ${height}`)
-      .attr("preserveAspectRatio", "xMidYMid meet")
       .append("g")
       .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    const xScale = d3
+    // Scales
+    const x = d3
       .scaleTime()
-      .domain(d3.extent(parsed, (d) => d.__date) as [Date, Date])
-      .range([0, innerWidth])
-      .nice();
+      .domain(d3.extent(parsedData, (d) => d.date) as [Date, Date])
+      .range([0, innerWidth]);
 
-    const yScale = d3
+    const y = d3
       .scaleLinear()
-      .domain([0, d3.max(parsed, (d) => d.__value)! * 1.1])
-      .range([innerHeight, 0])
-      .nice();
+      .domain([0, d3.max(parsedData, (d) => d.value)!])
+      .nice()
+      .range([innerHeight, 0]);
 
-    const defs = svg.append("defs");
-    const gradId = `grad-${Math.floor(Math.random() * 1e6)}`;
-    const gradient = defs
-      .append("linearGradient")
-      .attr("id", gradId)
-      .attr("x1", "0%")
-      .attr("x2", "0%")
-      .attr("y1", "0%")
-      .attr("y2", "100%");
+    // Axes
+    const formatDate = d3.timeFormat("%b %d");
 
-    gradient
-      .append("stop")
-      .attr("offset", "0%")
-      .attr("stop-opacity", 0.35)
-      .attr("stop-color", "#d473fe");
-    gradient
-      .append("stop")
-      .attr("offset", "100%")
-      .attr("stop-opacity", 0)
-      .attr("stop-color", "#d473fe");
-
-    const line = d3
-      .line<{ __date: Date; __value: number }>()
-      .x((d) => xScale(d.__date))
-      .y((d) => yScale(d.__value))
-      .curve(d3.curveBasis);
-
-    const area = d3
-      .area<{ __date: Date; __value: number }>()
-      .x((d) => xScale(d.__date))
-      .y0(innerHeight)
-      .y1((d) => yScale(d.__value))
-      .curve(d3.curveBasis);
-
-    g.append("path")
-      .datum(parsed)
-      .attr("fill", `url(#${gradId})`)
-      .attr("d", area)
-      .attr("opacity", 0)
-      .transition()
-      .duration(700)
-      .attr("opacity", 1);
-
-    const path = g
-      .append("path")
-      .datum(parsed)
-      .attr("fill", "none")
-      .attr("stroke", "#2563eb")
-      .attr("stroke-width", 2.5)
-      .attr("d", line);
-
-    const totalLength = path.node()!.getTotalLength();
-    path
-      .attr("stroke-dasharray", `${totalLength} ${totalLength}`)
-      .attr("stroke-dashoffset", totalLength)
-      .transition()
-      .duration(900)
-      .ease(d3.easeCubic)
-      .attr("stroke-dashoffset", 0);
-
-    const container = d3.select<HTMLDivElement, unknown>(containerRef.current!);
-
-    let tooltip = container
-      .selectAll<HTMLDivElement, null>(".tooltip-d3")
-      .data([null]);
-
-    const tip = tooltip
-      .enter()
-      .append("div")
-      .attr(
-        "class",
-        "tooltip-d3 absolute pointer-events-none bg-white/95 border p-2 rounded shadow-lg text-sm"
-      )
-      .style("display", "none");
-
-    if (toolTip) {
-      tooltip = tip.merge(
-        tooltip as d3.Selection<HTMLDivElement, null, HTMLDivElement, unknown>
+    g.append("g")
+      .attr("transform", `translate(0,${innerHeight})`)
+      .call(
+        d3
+          .axisBottom(x)
+          .ticks(5)
+          .tickFormat((d) => (d instanceof Date ? formatDate(d) : ""))
       );
-    }
+
+    g.append("g").call(d3.axisLeft(y).ticks(4));
+
+    const bisectDate = d3.bisector<ParsedPoint, Date>((d) => d.date).left;
+    const tooltipDateFormat = d3.timeFormat("%b %d");
+
+    const focus = g.append("g").style("display", "none");
+
+    focus
+      .append("circle")
+      .attr("r", 6)
+      .attr("fill", "#9333ea")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2);
 
     g.append("rect")
       .attr("width", innerWidth)
       .attr("height", innerHeight)
-      .attr("fill", "transparent")
-      .on("mousemove", function (event) {
-        const [mx] = d3.pointer(event, this);
-        const date = xScale.invert(mx);
-        const bisect = d3.bisector((d: { __date: Date }) => d.__date).left;
-        const idx = bisect(parsed, date);
-        const a = parsed[idx - 1];
-        const b = parsed[idx];
-        const nearest = !a
-          ? b
-          : !b
-          ? a
-          : date.getTime() - a.__date.getTime() >
-            b.__date.getTime() - date.getTime()
-          ? b
-          : a;
-
-        const mouseX = xScale(nearest.__date) + margin.left;
-        const mouseY = yScale(nearest.__value) + margin.top;
-
-        tooltip
-          .style("display", "block")
-          .style("left", `${mouseX + 12}px`)
-          .style("top", `${mouseY - 12}px`).html(`
-            <div><strong>${d3.timeFormat("%b %d, %Y")(
-              nearest.__date
-            )}</strong></div>
-            <div>Value: <strong>${nearest.__value}</strong></div>
-          `);
+      .style("fill", "none")
+      .style("pointer-events", "all")
+      .on("mouseenter", () => {
+        focus.style("display", null);
+        tooltip.style("opacity", 1);
       })
-      .on("mouseleave", function () {
-        tooltip.style("display", "none");
+      .on("mouseleave", () => {
+        focus.style("display", "none");
+        tooltip.style("opacity", 0);
+      })
+      .on("mousemove", (event) => {
+        const [mx] = d3.pointer(event);
+        const xDate = x.invert(mx);
+
+        const i = bisectDate(parsedData, xDate, 1);
+        const d0 = parsedData[i - 1];
+        const d1 = parsedData[i];
+        const d =
+          !d1 ||
+          xDate.getTime() - d0.date.getTime() <
+            d1.date.getTime() - xDate.getTime()
+            ? d0
+            : d1;
+
+        focus.attr("transform", `translate(${x(d.date)},${y(d.value)})`);
+        tooltip
+          .html(
+            `<strong>${tooltipDateFormat(
+              d.date
+            )}</strong><br/>Value: ${d.value.toLocaleString("en-IN", {
+              style: "currency",
+              currency: "INR",
+            })}`
+          )
+          .style("background", "rgba(255,255,255,0.98)")
+          .style("color", "#000")
+          .style("padding", "6px 10px")
+          .style("border-radius", "6px")
+          .style("font-size", "13px")
+          .style("box-shadow", "0 1px 2px rgba(0,0,0,0.5)")
+          .style("pointer-events", "none")
+          .style("font-family", "'Roboto', sans-serif")
+          .style("left", event.offsetX + 10 + "px")
+          .style("top", event.offsetY - 30 + "px");
       });
-  }, [dataset, width, height, margin, xAccessor, yAccessor]);
+
+    // Area
+    const area = d3
+      .area<ParsedPoint>()
+      .x((d) => x(d.date))
+      .y0(innerHeight)
+      .y1((d) => y(d.value))
+      .curve(d3.curveMonotoneX);
+
+    g.append("path")
+      .datum(parsedData)
+      .attr("fill", "#a855f7")
+      .attr("opacity", 0.2)
+      .attr("d", area);
+
+    // Line
+    const line = d3
+      .line<ParsedPoint>()
+      .x((d) => x(d.date))
+      .y((d) => y(d.value))
+      .curve(d3.curveMonotoneX);
+
+    const linePath = g
+      .append("path")
+      .datum(parsedData)
+      .attr("fill", "none")
+      .attr("stroke", "#9333ea")
+      .attr("stroke-width", 2)
+      .attr("d", line);
+
+    // Animate line draw
+    const length = linePath.node()!.getTotalLength();
+    linePath
+      .attr("stroke-dasharray", length)
+      .attr("stroke-dashoffset", length)
+      .transition()
+      .duration(800)
+      .ease(d3.easeCubicOut)
+      .attr("stroke-dashoffset", 0);
+
+    // Dots
+    const dots = g
+      .selectAll("circle")
+      .data(parsedData)
+      .enter()
+      .append("circle")
+      .attr("cx", (d) => x(d.date))
+      .attr("cy", innerHeight)
+      .attr("r", 4)
+      .attr("fill", "#9333ea");
+
+    dots
+      .transition()
+      .delay((_, i) => i * 10)
+      .duration(600)
+      .attr("cy", (d) => y(d.value));
+
+    // Tooltip
+    const tooltip = d3.select(tooltipRef.current);
+
+    dots
+      .on("mouseenter", (event, d) => {
+        tooltip
+          .style("opacity", 1)
+          .html(
+            `<strong>${d3.timeFormat("%b %d")(d.date)}</strong><br/>Value: ${
+              d.value
+            }`
+          );
+      })
+      .on("mousemove", (event) => {
+        tooltip
+          .style("left", event.pageX + 10 + "px")
+          .style("top", event.pageY - 30 + "px");
+      })
+      .on("mouseleave", () => {
+        tooltip.style("opacity", 0);
+      });
+  }, [data, width, height]);
 
   return (
-    <div ref={containerRef} className="w-full max-w-full relative p-2">
-      <svg ref={svgRef} style={{ width: "100%", height: "auto" }} />
+    <div style={{ position: "relative" }}>
+      <svg ref={svgRef} width={width} height={height} />
+      <div
+        ref={tooltipRef}
+        style={{
+          position: "absolute",
+          background: "#111",
+          color: "#fff",
+          padding: "6px 10px",
+          borderRadius: "6px",
+          fontSize: "12px",
+          pointerEvents: "none",
+          opacity: 0,
+        }}
+      />
     </div>
   );
 };
 
-export default CurvedLineChart;
+export default LineChart;
